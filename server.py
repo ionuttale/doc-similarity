@@ -168,7 +168,7 @@ def _handle_client(conn, comm, size, db_ids, db_matrix, vectorizer,
 
     elapsed = time.perf_counter() - t0
     print(
-        f"[Master] Query processed in {elapsed:.3f}s → top {len(results)} matches",
+        f"[Master] Query processed in {elapsed:.3f}s -> top {len(results)} matches",
         flush=True,
     )
     _send(conn, results)
@@ -178,7 +178,9 @@ def _local_similarity(db_ids, db_matrix, query_vec, top_n):
     norms = np.linalg.norm(db_matrix, axis=1)
     norm_q = np.linalg.norm(query_vec)
     denom = norms * norm_q
-    sims = np.where(denom > 0, db_matrix @ query_vec / denom, 0.0)
+    sims = np.zeros(len(denom))
+    mask = denom > 0
+    sims[mask] = (db_matrix @ query_vec)[mask] / denom[mask]
     top_idx = np.argsort(sims)[::-1][:top_n]
     return [(db_ids[i], float(sims[i])) for i in top_idx]
 
@@ -200,7 +202,10 @@ def run_worker(comm, rank: int) -> None:
             norms = np.linalg.norm(chunk, axis=1)
             norm_q = np.linalg.norm(query_vec)
             denom = norms * norm_q
-            sims = np.where(denom > 0, chunk @ query_vec / denom, 0.0)
+            dots = chunk @ query_vec
+            sims = np.zeros(len(denom))
+            mask = denom > 0
+            sims[mask] = dots[mask] / denom[mask]
             pairs = [(start + i, float(sims[i])) for i in range(len(sims))]
 
         comm.send(pairs, dest=0, tag=TAG_RESULT)
