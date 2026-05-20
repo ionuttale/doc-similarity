@@ -1,0 +1,10 @@
+mpi4py
+scikit-learn
+numpy
+scipy
+pandas
+matplotlib
+pdfplumber
+beautifulsoup4
+requests
+tqdm

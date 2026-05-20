@@ -1,0 +1,26 @@
+# Virtual environment
+venv/
+.venv/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# Data & outputs
+data/docs.db
+data/raw/
+benchmark_results.json
+benchmark_speedup.png
+
+# IDE
+.vscode/
+.idea/
+*.suo
+
+# OS
+Thumbs.db
+desktop.ini
