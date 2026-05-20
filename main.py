@@ -20,6 +20,11 @@ def main():
     size = comm.Get_size()
     args = build_parser().parse_args()
 
+    host = MPI.Get_processor_name()
+    role = "master" if rank == 0 else "worker"
+    print(f"[MPI] rank {rank}/{size}  {role}  on {host}", flush=True)
+    comm.Barrier()
+
     if rank == 0:
         from mpi_src.master import run_master
         t0 = time.perf_counter()

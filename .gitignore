@@ -10,11 +10,14 @@ __pycache__/
 dist/
 build/
 
+# MPI
+hostfile
+
 # Data & outputs
 data/docs.db
 data/raw/
-benchmark_results.json
-benchmark_speedup.png
+benchmark_results*.json
+benchmark_speedup*.png
 
 # IDE
 .vscode/
