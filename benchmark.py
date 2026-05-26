@@ -213,71 +213,106 @@ def run_distributed(docs_list: list[int], chunk_sizes: list[int]) -> list[dict]:
 
 # ── Plotting ──────────────────────────────────────────────────────────────────
 
+def _avg_over_chunks(data: list[dict]) -> list[dict]:
+    """Average time/throughput/speedup over chunk_size variants for the same (docs, n_ranks)."""
+    from collections import defaultdict
+    groups: dict[tuple, list[dict]] = defaultdict(list)
+    for r in data:
+        groups[(r["docs"], r["n_ranks"])].append(r)
+    result = []
+    for (docs, n_ranks), rows in groups.items():
+        sp_vals = [r["speedup"] for r in rows if r.get("speedup") is not None]
+        result.append({
+            "docs":       docs,
+            "n_ranks":    n_ranks,
+            "time":       sum(r["time"] for r in rows) / len(rows),
+            "throughput": sum(r["throughput"] for r in rows) / len(rows),
+            "speedup":    sum(sp_vals) / len(sp_vals) if sp_vals else None,
+            "mode":       rows[0].get("mode", "local"),
+        })
+    return result
+
+
 def plot(local: list[dict], distributed: list[dict], docs_list: list[int], out_png: str = "benchmark_speedup.png") -> None:
+    local = _avg_over_chunks(local)
+    distributed = _avg_over_chunks(distributed)
+
+    all_docs  = sorted(set(r["docs"]    for r in local))
+    all_ranks = sorted(set(r["n_ranks"] for r in local))
+
+    COLORS  = ["#2196F3", "#FF5722", "#4CAF50", "#9C27B0"]
+    MARKERS = ["o", "s", "^", "D"]
+
     fig, axes = plt.subplots(1, 3, figsize=(16, 5))
-    fig.suptitle("Document Similarity — MPI Benchmark", fontsize=13)
+    fig.suptitle("Similaritate Documente — Analiză Performanță MPI", fontsize=14, fontweight="bold")
 
-    # ① Speedup: local
+    # ── ① Speedup S = T₁ / Tₚ ────────────────────────────────────────────────
     ax = axes[0]
-    for docs in docs_list:
-        subset = sorted(
-            [r for r in local if r["docs"] == docs and r.get("speedup")],
-            key=lambda x: x["n_ranks"],
-        )
-        if subset:
-            ax.plot([r["n_ranks"] for r in subset], [r["speedup"] for r in subset],
-                    marker="o", label=f"{docs} docs")
-    max_rank = max(LOCAL_RANK_STEPS)
-    ax.plot([1, max_rank], [1, max_rank], "k--", label="Ideal")
-    ax.set_xlabel("MPI ranks (local)")
-    ax.set_ylabel("Speedup")
-    ax.set_title("Local Speedup")
-    ax.legend(fontsize=8)
-    ax.grid(True)
-
-    # ② Throughput: local vs distributed
-    ax = axes[1]
-    for docs in docs_list:
-        loc = sorted([r for r in local if r["docs"] == docs],
+    for i, docs in enumerate(all_docs):
+        pts = sorted([r for r in local if r["docs"] == docs and r.get("speedup") is not None],
                      key=lambda x: x["n_ranks"])
-        dist = sorted([r for r in distributed if r["docs"] == docs],
-                      key=lambda x: x["n_ranks"])
-        if loc:
-            ax.plot([r["n_ranks"] for r in loc],
-                    [r["throughput"] for r in loc],
-                    marker="o", linestyle="-", label=f"local {docs}")
-        if dist:
-            ax.plot([r["n_ranks"] for r in dist],
-                    [r["throughput"] for r in dist],
-                    marker="s", linestyle="--", label=f"dist {docs}")
-    ax.set_xlabel("MPI ranks")
-    ax.set_ylabel("Throughput (docs/s)")
-    ax.set_title("Local vs Distributed Throughput")
-    ax.legend(fontsize=7)
-    ax.grid(True)
+        if pts:
+            ax.plot([p["n_ranks"] for p in pts], [p["speedup"] for p in pts],
+                    marker=MARKERS[i], color=COLORS[i], linewidth=2, markersize=7,
+                    label=f"{docs} documente")
+        if distributed:
+            pts_d = sorted([r for r in distributed if r["docs"] == docs and r.get("speedup") is not None],
+                           key=lambda x: x["n_ranks"])
+            if pts_d:
+                ax.plot([p["n_ranks"] for p in pts_d], [p["speedup"] for p in pts_d],
+                        marker=MARKERS[i], color=COLORS[i], linewidth=2, markersize=7,
+                        linestyle="--", label=f"{docs} doc. (dist.)")
 
-    # ③ Time vs docs (best config per mode)
+    ax.axhline(y=1.0, color="gray", linestyle=":", linewidth=1.5, label="S = 1  (nicio îmbunătățire)")
+    ax.set_xlabel("Număr procese MPI  (p)", fontsize=11)
+    ax.set_ylabel("Speedup   S = T₁ / Tₚ", fontsize=11)
+    ax.set_title("Speedup", fontsize=12, fontweight="bold")
+    ax.set_xticks(all_ranks)
+    ax.legend(fontsize=9)
+    ax.grid(True, alpha=0.35)
+
+    # ── ② Timp de execuție vs număr procese ───────────────────────────────────
+    ax = axes[1]
+    for i, docs in enumerate(all_docs):
+        pts = sorted([r for r in local if r["docs"] == docs], key=lambda x: x["n_ranks"])
+        if pts:
+            ax.plot([p["n_ranks"] for p in pts], [p["time"] for p in pts],
+                    marker=MARKERS[i], color=COLORS[i], linewidth=2, markersize=7,
+                    label=f"{docs} doc. (local)")
+        if distributed:
+            pts_d = sorted([r for r in distributed if r["docs"] == docs], key=lambda x: x["n_ranks"])
+            if pts_d:
+                ax.plot([p["n_ranks"] for p in pts_d], [p["time"] for p in pts_d],
+                        marker=MARKERS[i], color=COLORS[i], linewidth=2, markersize=7,
+                        linestyle="--", label=f"{docs} doc. (dist.)")
+
+    ax.set_xlabel("Număr procese MPI  (p)", fontsize=11)
+    ax.set_ylabel("Timp execuție  (s)", fontsize=11)
+    ax.set_title("Timp de execuție", fontsize=12, fontweight="bold")
+    ax.set_xticks(all_ranks)
+    ax.legend(fontsize=9)
+    ax.grid(True, alpha=0.35)
+
+    # ── ③ Throughput vs număr documente ──────────────────────────────────────
     ax = axes[2]
-    for mode, dataset, marker in [("local", local, "o"), ("distributed", distributed, "s")]:
-        if not dataset:
-            continue
-        best: dict[int, float] = {}
-        for r in dataset:
-            d = r["docs"]
-            if d not in best or r["time"] < best[d]:
-                best[d] = r["time"]
-        xs = sorted(best)
-        ax.plot(xs, [best[d] for d in xs], marker=marker, label=mode)
-    ax.set_xlabel("Number of documents")
-    ax.set_ylabel("Best time (s)")
-    ax.set_title("Best Time vs Document Count")
-    ax.legend()
-    ax.grid(True)
+    for i, ranks in enumerate(all_ranks):
+        pts = sorted([r for r in local if r["n_ranks"] == ranks], key=lambda x: x["docs"])
+        if pts:
+            ax.plot([p["docs"] for p in pts], [p["throughput"] for p in pts],
+                    marker=MARKERS[i % len(MARKERS)], color=COLORS[i % len(COLORS)],
+                    linewidth=2, markersize=7, label=f"p = {ranks}")
+
+    ax.set_xlabel("Număr documente", fontsize=11)
+    ax.set_ylabel("Throughput  (doc/s)", fontsize=11)
+    ax.set_title("Throughput", fontsize=12, fontweight="bold")
+    ax.set_xticks(all_docs)
+    ax.legend(fontsize=9)
+    ax.grid(True, alpha=0.35)
 
     plt.tight_layout()
-    plt.savefig(out_png, dpi=150)
+    plt.savefig(out_png, dpi=150, bbox_inches="tight")
     plt.show()
-    print(f"\nPlot saved to {out_png}")
+    print(f"\nGrafic salvat: {out_png}")
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────

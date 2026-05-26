@@ -8,7 +8,7 @@ def build_parser():
     p.add_argument("--docs",       type=int, default=500,          help="Number of documents to process")
     p.add_argument("--top-n",      type=int, default=10,           help="Top N similar pairs to return")
     p.add_argument("--chunk-size", type=int, default=50,           help="Rows per worker batch (similarity phase)")
-    p.add_argument("--source",     choices=["newsgroups", "db", "files"], default="newsgroups")
+    p.add_argument("--source",     choices=["newsgroups", "db", "files", "synthetic"], default="newsgroups")
     p.add_argument("--db",         default="data/docs.db",         help="SQLite database path")
     p.add_argument("--files-dir",  default="data/raw",             help="Directory with raw documents")
     return p

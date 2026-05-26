@@ -19,11 +19,20 @@ data/raw/
 benchmark_results*.json
 benchmark_speedup*.png
 
-# IDE
+# IDE / tools
 .vscode/
 .idea/
 *.suo
+.claude/
 
 # OS
 Thumbs.db
 desktop.ini
+*.jpeg
+*.jpg
+
+# Extra benchmark outputs
+bench.json
+quick_bench*.json
+quick_bench*.png
+benchmark_client*.png

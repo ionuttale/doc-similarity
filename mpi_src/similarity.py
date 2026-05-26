@@ -37,6 +37,17 @@ def partial_top_pairs(matrix: np.ndarray, row_start: int, row_end: int, top_n: i
     return pairs[:keep]
 
 
+def compute_pair_scores(matrix: np.ndarray, pairs: np.ndarray) -> list[tuple[int, int, float]]:
+    """Compute cosine similarity for an explicit list of (i, j) candidate pairs."""
+    norms = np.linalg.norm(matrix, axis=1)
+    norms[norms == 0] = 1.0
+    results = []
+    for i, j in pairs:
+        score = float(np.dot(matrix[i], matrix[j]) / (norms[i] * norms[j]))
+        results.append((int(i), int(j), score))
+    return results
+
+
 def merge_top_n(all_pairs: list, top_n: int) -> list:
     """Deduplicate and return the global top-N pairs from merged worker results."""
     seen = set()
