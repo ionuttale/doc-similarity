@@ -93,7 +93,7 @@ def _split_ranges(n: int, n_workers: int) -> list[tuple[int, int]]:
 
 # ── Master (rank 0) ───────────────────────────────────────────────────────────
 
-def run_master(comm, size: int, args, db_ids, db_matrix, vectorizer) -> None:
+def run_master(comm, size: int, args, db_ids, db_texts, db_matrix, vectorizer) -> None:
     n_workers = size - 1
     top_n     = args.top_n
 
@@ -113,7 +113,7 @@ def run_master(comm, size: int, args, db_ids, db_matrix, vectorizer) -> None:
             conn, addr = server_sock.accept()
             print(f"[Master] Connection from {addr}", flush=True)
             try:
-                _handle_client(conn, comm, size, db_ids, db_matrix, vectorizer,
+                _handle_client(conn, comm, size, db_ids, db_texts, db_matrix, vectorizer,
                                 n_workers, top_n)
             except Exception as exc:
                 print(f"[Master] Error: {exc}", flush=True)
@@ -132,7 +132,7 @@ def run_master(comm, size: int, args, db_ids, db_matrix, vectorizer) -> None:
             comm.send("shutdown", dest=w, tag=TAG_CTRL)
 
 
-def _handle_client(conn, comm, size, db_ids, db_matrix, vectorizer,
+def _handle_client(conn, comm, size, db_ids, db_texts, db_matrix, vectorizer,
                    n_workers, top_n) -> None:
     import time
 
@@ -144,7 +144,7 @@ def _handle_client(conn, comm, size, db_ids, db_matrix, vectorizer,
 
     if n_workers == 0:
         # Fallback: single-process (no MPI workers)
-        results = _local_similarity(db_ids, db_matrix, query_vec, top_n)
+        results = _local_similarity(db_ids, db_texts, db_matrix, query_vec, top_n)
     else:
         # Notify workers a query is incoming
         for w in range(1, size):
@@ -165,7 +165,7 @@ def _handle_client(conn, comm, size, db_ids, db_matrix, vectorizer,
             all_pairs.extend(comm.recv(source=w, tag=TAG_RESULT))
 
         all_pairs.sort(key=lambda x: x[1], reverse=True)
-        results = [(db_ids[idx], score) for idx, score in all_pairs[:top_n]]
+        results = [(db_ids[idx], _snippet(db_texts[idx]), score) for idx, score in all_pairs[:top_n]]
 
     elapsed = time.perf_counter() - t0
     print(
@@ -175,7 +175,12 @@ def _handle_client(conn, comm, size, db_ids, db_matrix, vectorizer,
     _send(conn, results)
 
 
-def _local_similarity(db_ids, db_matrix, query_vec, top_n):
+def _snippet(text: str, length: int = 60) -> str:
+    line = text.strip().splitlines()[0].strip() if text.strip() else ""
+    return line[:length] + ("…" if len(line) > length else "")
+
+
+def _local_similarity(db_ids, db_texts, db_matrix, query_vec, top_n):
     norms = np.linalg.norm(db_matrix, axis=1)
     norm_q = np.linalg.norm(query_vec)
     denom = norms * norm_q
@@ -183,7 +188,7 @@ def _local_similarity(db_ids, db_matrix, query_vec, top_n):
     mask = denom > 0
     sims[mask] = (db_matrix @ query_vec)[mask] / denom[mask]
     top_idx = np.argsort(sims)[::-1][:top_n]
-    return [(db_ids[i], float(sims[i])) for i in top_idx]
+    return [(db_ids[i], _snippet(db_texts[i]), float(sims[i])) for i in top_idx]
 
 
 # ── Worker (ranks 1..N-1) ─────────────────────────────────────────────────────
@@ -245,7 +250,7 @@ def main() -> None:
         db_matrix = vectorizer.fit_transform(db_texts).toarray().astype(np.float32)
         print(f"[Master] TF-IDF matrix: {db_matrix.shape}", flush=True)
 
-        run_master(comm, size, args, db_ids, db_matrix, vectorizer)
+        run_master(comm, size, args, db_ids, db_texts, db_matrix, vectorizer)
     else:
         run_worker(comm, rank)
 
