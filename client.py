@@ -94,10 +94,11 @@ def main() -> None:
         print("  (no matches returned)")
         return
 
-    print(f"  {'Rank':>4}  {'Score':>7}  {'Doc ID':>6}  Snippet")
-    print(f"  {'─'*4}  {'─'*7}  {'─'*6}  {'─'*60}")
-    for i, (doc_id, snippet, score) in enumerate(results, 1):
-        print(f"  {i:>4}  {score:>7.4f}  {str(doc_id):>6}  {snippet}")
+    print(f"  {'Rank':>4}  {'Score':>7}  Document")
+    print(f"  {'─'*4}  {'─'*7}  {'─'*80}")
+    for i, (doc_id, name, score) in enumerate(results, 1):
+        display = name if name else f"[doc {doc_id}]"
+        print(f"  {i:>4}  {score:>7.4f}  {display}")
 
 
 if __name__ == "__main__":
