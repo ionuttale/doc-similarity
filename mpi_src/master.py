@@ -91,12 +91,12 @@ def run_master(comm, size: int, args) -> list[tuple[int, int, float]]:
         f"({time.perf_counter()-t_lsh:.2f}s)"
     )
 
-    # --- Broadcast matrice TF-IDF catre workeri (uppercase MPI, zero-copy) ---
+    # trimitem mai întâi dimensiunile, că workerul trebuie să știe cât să aloce înainte să primească date
     shape_arr = np.array(dense.shape, dtype=np.int32)
     comm.Bcast(shape_arr, root=0)
     comm.Bcast(dense, root=0)
 
-    # --- Sarcini = intervale de randuri (chunk_size randuri per task) ---
+    # împărțim rândurile matricei în felii egale - fiecare felie e un task independent
     row_chunks = [
         (start, min(start + args.chunk_size, n))
         for start in range(0, n, args.chunk_size)
@@ -112,7 +112,7 @@ def run_master(comm, size: int, args) -> list[tuple[int, int, float]]:
     pending  = 0
     all_pairs: list[tuple[int, int, float]] = []
 
-    # Distribuire initiala: un task per worker
+    # la start trimitem câte un task fiecărui worker ca să nu stea degeaba
     for w in range(1, size):
         if task_idx < total:
             s, e = row_chunks[task_idx]
@@ -122,7 +122,8 @@ def run_master(comm, size: int, args) -> list[tuple[int, int, float]]:
         else:
             _send_shutdown(comm, w)
 
-    # Bucla dinamica: ANY_SOURCE = master asteapta cel mai rapid worker disponibil
+    # așteptăm orice worker să termine (nu unul anume) - cine termină primul primește task nou
+    # asta face ca workerii rapizi să facă mai multă muncă, fără timp mort
     n_res_buf = np.empty(1, dtype=np.int32)
     while pending > 0:
         status = MPI.Status()
@@ -145,7 +146,7 @@ def run_master(comm, size: int, args) -> list[tuple[int, int, float]]:
         else:
             _send_shutdown(comm, worker)
 
-    # Filtrare optionala cu candidatii LSH (reduce munca de merge)
+    # păstrăm doar perechile confirmate de LSH; dacă nu rămâne nimic, folosim tot
     if lsh_pairs:
         all_pairs = [p for p in all_pairs if (min(p[0],p[1]), max(p[0],p[1])) in lsh_pairs] or all_pairs
 

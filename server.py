@@ -41,6 +41,7 @@ def _recv(sock: socket.socket):
 
 
 def _recv_exact(sock: socket.socket, n: int) -> bytes:
+    # TCP poate tăia mesajele în bucăți, deci citim în buclă până avem exact n bytes
     buf = bytearray()
     while len(buf) < n:
         chunk = sock.recv(n - len(buf))

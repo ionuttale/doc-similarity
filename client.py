@@ -51,14 +51,22 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     args = build_parser().parse_args()
 
+    import os
+    ext = os.path.splitext(args.file)[1].lower()
     try:
-        with open(args.file, "r", encoding=args.encoding) as f:
-            content = f.read()
+        if ext == ".pdf":
+            import pdfplumber
+            with pdfplumber.open(args.file) as pdf:
+                content = "\n".join(page.extract_text() or "" for page in pdf.pages)
+        elif ext in (".html", ".htm"):
+            from bs4 import BeautifulSoup
+            with open(args.file, encoding=args.encoding, errors="ignore") as f:
+                content = BeautifulSoup(f.read(), "html.parser").get_text(separator=" ", strip=True)
+        else:
+            with open(args.file, "r", encoding=args.encoding) as f:
+                content = f.read()
     except FileNotFoundError:
         print(f"[Client] ERROR: file not found: {args.file}", file=sys.stderr)
-        sys.exit(1)
-    except UnicodeDecodeError as exc:
-        print(f"[Client] ERROR: cannot decode file ({exc})", file=sys.stderr)
         sys.exit(1)
 
     print(f"[Client] File: {args.file} ({len(content):,} chars)")

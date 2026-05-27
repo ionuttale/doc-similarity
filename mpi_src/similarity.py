@@ -11,23 +11,27 @@ def partial_top_pairs(matrix: np.ndarray, row_start: int, row_end: int, top_n: i
 
     norms = np.linalg.norm(matrix, axis=1, keepdims=True)
     norms[norms == 0] = 1.0
-    normed = matrix / norms  # (n, vocab)
+    normed = matrix / norms
 
-    chunk = normed[row_start:row_end]  # (chunk_rows, vocab)
-    scores = chunk @ normed.T          # (chunk_rows, n)
+    chunk = normed[row_start:row_end]
+    # un singur produs matriceal calculează toate scorurile cosinus dintr-odată
+    scores = chunk @ normed.T
 
+    # returnăm mai mult decât top_n ca masterul să aibă cu ce lucra la merge
     keep = min(top_n * 5, max(1, n - 1))
     pairs = []
 
     for local_i, global_i in enumerate(range(row_start, row_end)):
         row = scores[local_i].copy()
-        row[: global_i + 1] = -2.0  # mask self and lower triangle
+        # mascăm tot ce e la stânga (inclusiv documentul cu el însuși) ca să nu raportăm fiecare pereche de două ori
+        row[: global_i + 1] = -2.0
 
         remaining = n - global_i - 1
         if remaining <= 0:
             continue
 
         k = min(keep, remaining)
+        # argpartition găsește top-k fără să sorteze tot array-ul - mai rapid decât argsort
         top_j = np.argpartition(row, -k)[-k:]
         for j in top_j:
             if row[j] > -2.0:

@@ -186,14 +186,24 @@ Sistemul returneaz\u{a} un top-$N$ al celor mai similare perechi de documente, u
   \item Scorul de similaritate cosinus (valoare \^{i}n intervalul $[0, 1]$)
 \end{itemize}
 
+\section{Moduri de rulare}
+
+Sistemul ofer\u{a} dou\u{a} moduri de utilizare:
+
+\begin{itemize}
+  \item \textbf{Modul batch} (\texttt{main.py}) — proceseaz\u{a} un corpus \^{i}ntreg \c{s}i returneaz\u{a} top-$N$ perechi de documente cele mai similare; procesele MPI pornesc, execut\u{a} \c{s}i se \^{i}nchid
+  \item \textbf{Modul server} (\texttt{server.py} + \texttt{client.py}) — serverul r\u{a}m\^{a}ne pornit permanent cu baza de date \^{i}n memorie; clientul trimite un document nou prin TCP \c{s}i prime\c{s}te \^{i}napoi cele mai similare documente din corpus, f\u{a}r\u{a} a reporni procesele MPI
+\end{itemize}
+
 \section{Parametri de configurare}
 
 Sistemul accept\u{a} urm\u{a}torii parametri prin linia de comand\u{a}:
 \begin{itemize}
   \item \texttt{--docs $N$} — num\u{a}rul de documente prelucrate
-  \item \texttt{--chunk-size $C$} — num\u{a}rul de r\^{a}nduri per task distribuit workerilor
+  \item \texttt{--chunk-size $C$} — num\u{a}rul de r\^{a}nduri per task distribuit workerilor (modul batch)
   \item \texttt{--top-n $K$} — num\u{a}rul de perechi returnate \^{i}n rezultat
   \item \texttt{--source \{newsgroups, synthetic, files, db\}} — sursa documentelor
+  \item \texttt{--port $P$} — portul TCP pe care ascult\u{a} serverul (implicit 5555, modul server)
 \end{itemize}
 
 % ============================================================
@@ -399,6 +409,75 @@ def partial_top_pairs(matrix, row_start, row_end, top_n):
 
 Opera\c{t}ia \texttt{chunk @ normed.T} de forma $(C \times V) \cdot (V \times N)$ beneficiaz\u{a} de optimiz\u{a}rile BLAS (OpenBLAS / MKL), ating\^{a}nd sute de GFLOPS pe hardware modern.
 
+\section{Arhitectura Modul Server-Client}
+
+Pe l\^{a}ng\u{a} modul batch, sistemul implementeaz\u{a} un mod server de lung\u{a} durat\u{a}, \^{i}n care masterul (rank 0) ascult\u{a} pe un socket TCP, iar workerii (rank 1..N-1) r\u{a}m\^{a}n activi \^{i}ntre interog\u{a}ri.
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[
+  node distance = 1.0cm and 2.2cm,
+  box/.style   = {rectangle, rounded corners, draw, fill=blue!10,
+                  minimum width=3cm, minimum height=1cm, align=center, font=\small},
+  worker/.style= {rectangle, rounded corners, draw, fill=orange!20,
+                  minimum width=2.6cm, minimum height=0.9cm, align=center, font=\small},
+  client/.style= {rectangle, rounded corners, draw, fill=green!15,
+                  minimum width=2.6cm, minimum height=0.9cm, align=center, font=\small},
+  arr/.style   = {-Stealth, thick}
+]
+
+\node[client] (client) {Client\\(\texttt{client.py})};
+\node[box, right=2.5cm of client] (master) {Master\\(Rank 0)\\TCP + MPI};
+\node[worker, right=of master, yshift= 1.5cm] (w1) {Worker 1};
+\node[worker, right=of master, yshift=-1.5cm] (w2) {Worker $p{-}1$};
+
+\draw[arr, teal]            (client.east)  -- node[above, font=\scriptsize]{TCP: document text} (master.west);
+\draw[arr, teal, dashed]    (master.west)  -- node[below, font=\scriptsize]{TCP: top-N matches} (client.east);
+\draw[arr, blue]            (master.east)  -- node[above, font=\scriptsize]{\texttt{bcast} + range} (w1.west);
+\draw[arr, blue]            (master.east)  -- node[below, font=\scriptsize]{\texttt{bcast} + range} (w2.west);
+\draw[arr, red!70!black, dashed] (w1.west) -- node[above, font=\scriptsize]{partial sims} (master.east);
+\draw[arr, red!70!black, dashed] (w2.west) -- node[below, font=\scriptsize]{partial sims} (master.east);
+
+\end{tikzpicture}
+\caption{Arhitectura mod server. Clientul comunic\u{a} cu masterul prin TCP; masterul coordoneaz\u{a} workerii prin MPI pentru fiecare interogare primit\u{a}.}
+\label{fig:server_client}
+\end{figure}
+
+Fluxul unei interog\u{a}ri \^{i}n modul server este urm\u{a}torul:
+\begin{enumerate}
+  \item Clientul trimite textul documentului prin TCP (\texttt{client.py})
+  \item Masterul transform\u{a} textul cu vectorizer-ul pre-antrenat (\texttt{vectorizer.transform})
+  \item Masterul notific\u{a} to\c{t}i workerii c\u{a} urmeaz\u{a} o interogare (tag \texttt{TAG\_CTRL = ``query''})
+  \item Masterul difuzeaz\u{a} matricea corpusului \c{s}i vectorul interog\u{a}rii via \texttt{comm.bcast}
+  \item Fiecare worker prime\c{s}te intervalul s\u{a}u de r\^{a}nduri \c{s}i calculeaz\u{a} similitudinea cosinus fa\c{t}\u{a} de vectorul interog\u{a}rii
+  \item Masterul agreg\u{a} rezultatele par\c{t}iale, sorteaz\u{a} \c{s}i trimite top-$K$ \^{i}napoi clientului prin TCP
+\end{enumerate}
+
+Fa\c{t}\u{a} de modul batch, o diferen\c{t}\u{a} important\u{a} este c\u{a} \^{i}n modul server nu se calculeaz\u{a} MinHash/LSH per interogare — corpusul este deja \^{i}n memorie \c{s}i vectorizat, a\c{s}a c\u{a} se poate calcula direct similitudinea fa\c{t}\u{a} de \^{i}ntreaga baz\u{a} de date \^{i}n $\mathcal{O}(N)$ opera\c{t}ii.
+
+\subsection*{Protocolul TCP de mesagerie}
+
+Comunicarea \^{i}ntre client \c{s}i server folose\c{s}te un protocol simplu de \textit{framing}: primii 4 bytes con\c{t}in lungimea payload-ului (big-endian unsigned int), urma\c{t}i de payload-ul serializat cu \texttt{pickle}:
+
+\begin{lstlisting}[caption={Protocol TCP client-server (framing cu lungime prefix\u{a})}]
+# Trimitere (client sau server)
+def _send(sock, obj):
+    data = pickle.dumps(obj)
+    sock.sendall(struct.pack(">I", len(data)) + data)
+
+# Receptie — TCP poate fragmenta, deci citim exact n bytes
+def _recv_exact(sock, n):
+    buf = bytearray()
+    while len(buf) < n:
+        chunk = sock.recv(n - len(buf))
+        if not chunk:
+            raise ConnectionError("disconnected")
+        buf.extend(chunk)
+    return bytes(buf)
+\end{lstlisting}
+
+Prefixarea cu lungimea este necesar\u{a} deoarece TCP este un protocol de flux (\textit{stream}): un apel \texttt{send()} poate fi fragmentat \^{i}n mai multe segmente, iar receptorul nu \c{s}tie unde se termin\u{a} un mesaj \c{s}i unde \^{i}ncepe urm\u{a}torul f\u{a}r\u{a} o delimitare explicit\u{a}.
+
 \section{Modulul MinHash + LSH}
 
 \begin{figure}[H]
@@ -432,17 +511,19 @@ Proiectul este organizat modular, cu separarea clar\u{a} a responsabilit\u{a}\c{
 
 \begin{verbatim}
 proiect/
-├── main.py                  # Punct de intrare, argparse, MPI init
+├── main.py                  # Mod batch: argparse, MPI init, statistici
+├── server.py                # Mod server: TCP + MPI master long-running
+├── client.py                # Client TCP: trimite document, afiseaza matches
 ├── mpi_src/
-│   ├── master.py            # Logica master: incarcare date, LSH,
+│   ├── master.py            # Logica master batch: incarcare date, LSH,
 │   │                        #   distributie dinamica (ANY_SOURCE)
 │   ├── worker.py            # Logica worker: Bcast, calcul cosinus
-│   ├── similarity.py        # Functii calcul cosinus (vectorizat)
+│   ├── similarity.py        # Functii calcul cosinus (vectorizat, BLAS)
 │   └── minhash_lsh.py       # MinHash + LSH banding
 ├── processing/
 │   ├── tfidf.py             # TfidfVectorizer sklearn
 │   └── extract.py           # Extragere text PDF/HTML/TXT
-└── benchmark.py / quick_bench.py
+└── benchmark.py / quick_bench.py / benchmark_client.py
 \end{verbatim}
 
 \section{Fluxul de execu\c{t}ie}
@@ -715,10 +796,50 @@ mpiexec -machinefile hostfile -n 20 \
     --docs 5000 --chunk-size 200 --top-n 10
 \end{lstlisting}
 
+\section*{Mod server — pornire \c{s}i interogare}
+
+Serverul se porne\c{s}te cu \texttt{mpiexec}, exact ca modul batch, dar r\u{a}m\^{a}ne activ \c{s}i a\c{s}teapt\u{a} conexiuni TCP:
+
+\begin{lstlisting}[language=bash, caption={Pornire server MPI cu 5 procese}]
+mpiexec -n 5 .venv\Scripts\python.exe server.py ^
+    --source newsgroups --docs 500 --port 5555
+\end{lstlisting}
+
+\noindent Clientul poate fi rulat de pe orice ma\c{s}in\u{a} din re\c{t}ea:
+
+\begin{lstlisting}[language=bash, caption={Interogare server cu un document local}]
+.venv\Scripts\python.exe client.py ^
+    --file articol.txt ^
+    --host 192.168.0.127 ^
+    --port 5555
+\end{lstlisting}
+
+\noindent Exemplu de ie\c{s}ire client:
+
+\begin{lstlisting}[language=bash, caption={Ie\c{s}ire client — top-10 documente similare}]
+[Client] File: articol.txt (3,241 chars)
+[Client] Connecting to 192.168.0.127:5555...
+[Client] Response in 0.082s -- 10 match(es)
+
+  Rank    Doc ID     Score
+  ----  --------  --------
+     1       142    0.8731
+     2        37    0.8104
+     3       289    0.7653
+     ...
+\end{lstlisting}
+
+\noindent Serverul poate fi oprit cu \texttt{Ctrl+C}; trimitere semnal \texttt{shutdown} c\u{a}tre to\c{t}i workerii este f\u{a}cut\u{a} automat.
+
 \section*{Benchmark complet}
-\begin{lstlisting}[language=bash, caption={Benchmark cu grafice}]
-.venv\Scripts\python.exe quick_bench.py \
+\begin{lstlisting}[language=bash, caption={Benchmark speedup local}]
+.venv\Scripts\python.exe quick_bench.py ^
     --docs 3000 5000 7000
+\end{lstlisting}
+
+\begin{lstlisting}[language=bash, caption={Benchmark laten\c{t}\u{a} server (necesit\u{a} serverul pornit)}]
+.venv\Scripts\python.exe benchmark_client.py ^
+    --host 127.0.0.1 --port 5555
 \end{lstlisting}
 
 \end{document}

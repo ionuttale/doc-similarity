@@ -4,7 +4,8 @@ from scipy.sparse import spmatrix
 
 N_HASHES = 128
 N_BANDS = 16
-_PRIME = (1 << 31) - 1  # Mersenne prime for universal hashing
+# număr prim mare - asigură că funcțiile de hash distribuite uniform, fără coliziuni
+_PRIME = (1 << 31) - 1
 
 
 def compute_minhash(tfidf_matrix: spmatrix, n_hashes: int = N_HASHES, seed: int = 42) -> np.ndarray:
@@ -15,14 +16,16 @@ def compute_minhash(tfidf_matrix: spmatrix, n_hashes: int = N_HASHES, seed: int 
     b = rng.integers(0, _PRIME, size=n_hashes, dtype=np.int64)
 
     terms = np.arange(n_terms, dtype=np.int64)
-    # hash_table[h, t] = hash value for term t under hash function h
-    hash_table = ((a[:, None] * terms[None, :] + b[:, None]) % _PRIME)  # (n_hashes, n_terms)
+    # calculăm toți hashii dintr-un singur produs matriceal, fără bucle
+    hash_table = ((a[:, None] * terms[None, :] + b[:, None]) % _PRIME)
 
+    # inițializăm cu _PRIME (maxim posibil) ca operația minimum să funcționeze corect
     signatures = np.full((n_docs, n_hashes), _PRIME, dtype=np.int64)
     cx = tfidf_matrix.tocsr()
     rows, cols = cx.nonzero()
 
     for h in range(n_hashes):
+        # fiecare document reține cel mai mic hash al cuvintelor sale - asta e MinHash
         np.minimum.at(signatures[:, h], rows, hash_table[h, cols])
 
     return signatures
@@ -34,18 +37,20 @@ def lsh_candidate_pairs(signatures: np.ndarray, n_bands: int = N_BANDS) -> list[
     Threshold Jaccard ≈ (1/n_bands)^(1/rows_per_band).
     """
     n_docs, n_hashes = signatures.shape
-    rpb = n_hashes // n_bands
+    rpb = n_hashes // n_bands  # 128 hashes / 16 benzi = 8 hash-uri per bandă
     candidates: set[tuple[int, int]] = set()
 
     for band in range(n_bands):
         band_sigs = signatures[:, band * rpb : (band + 1) * rpb]
         buckets: dict[bytes, list[int]] = {}
         for i in range(n_docs):
+            # bytes e hashabil, deci poate fi cheie de dicționar
             key = band_sigs[i].tobytes()
             buckets.setdefault(key, []).append(i)
         for group in buckets.values():
             if len(group) < 2:
                 continue
+            # dacă două documente cad în același bucket pe orice bandă, îi tratăm ca potențial similari
             for i in range(len(group)):
                 for j in range(i + 1, len(group)):
                     lo, hi = (group[i], group[j]) if group[i] < group[j] else (group[j], group[i])
